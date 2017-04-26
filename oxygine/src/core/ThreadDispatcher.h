@@ -3,6 +3,11 @@
 #include <vector>
 #include <functional>
 
+#if OX_CPP11THREADS
+    #include <mutex>
+    #include <condition_variable>
+#else
+
 #if defined(_WIN32) && !defined(__MINGW32__)
 typedef struct pthread_mutex_t_* pthread_mutex_t;
 typedef struct pthread_cond_t_* pthread_cond_t;
@@ -10,8 +15,22 @@ typedef struct pthread_cond_t_* pthread_cond_t;
 #   include "pthread.h"
 #endif
 
+#endif
+
 namespace oxygine
 {
+#if OX_CPP11THREADS
+    class MutexPthreadLock
+    {
+    public:
+        MutexPthreadLock(std::unique_lock<std::mutex>& l, bool lock = true);
+        ~MutexPthreadLock();
+
+    protected:
+        std::unique_lock<std::mutex>& _lock;
+        bool _locked;
+    };
+#else
     class MutexPthreadLock
     {
     public:
@@ -22,6 +41,8 @@ namespace oxygine
         pthread_mutex_t& _mutex;
         bool _locked;
     };
+#endif
+
     /*
     class TDMessage
     {
@@ -131,9 +152,15 @@ namespace oxygine
         void _popMessageNoCB(message&);
         void _replyLast(void* val);
 
-
+#if OX_CPP11THREADS
+        // TODO: This should be a std::recursive_mutex considering the original code but std::condition_variable only supports a normal std::mutex
+        std::mutex _mutexInternal;
+        std::unique_lock<std::mutex> _mutex;
+        std::condition_variable _cond;
+#else
         pthread_mutex_t _mutex;
         pthread_cond_t _cond;
+#endif
 
         typedef std::vector<message> messages;
         messages _events;

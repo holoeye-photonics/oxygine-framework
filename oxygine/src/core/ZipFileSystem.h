@@ -61,7 +61,7 @@ namespace oxygine
             typedef std::vector<zpitem> zips;
             zips _zps;
 
-            Mutex _lock;
+            MutexRecursive _lock;
         };
 
         bool read(file_entry* entry, file::buffer& bf);

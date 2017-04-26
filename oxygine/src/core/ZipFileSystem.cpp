@@ -40,7 +40,7 @@ namespace oxygine
             return true;
         }
 
-        Zips::Zips(): _sort(false), _lock(true)
+        Zips::Zips(): _sort(false)
         {
 
         }
@@ -74,7 +74,7 @@ namespace oxygine
 
         void Zips::add(const unsigned char* data, unsigned int size)
         {
-            MutexAutoLock al(_lock);
+            MutexRecursiveAutoLock al(_lock);
 
             zlib_filefunc_def ff;
             fill_memory_filefunc(&ff);
@@ -98,7 +98,7 @@ namespace oxygine
 
         void Zips::add(std::vector<char>& data)
         {
-            MutexAutoLock al(_lock);
+            MutexRecursiveAutoLock al(_lock);
 
             zlib_filefunc_def ff;
             fill_memory_filefunc(&ff);
@@ -163,7 +163,7 @@ namespace oxygine
 
         void Zips::add(const char* name)
         {
-            MutexAutoLock al(_lock);
+            MutexRecursiveAutoLock al(_lock);
 
             zlib_filefunc_def zpfs;
             memset(&zpfs, 0, sizeof(zpfs));
@@ -205,13 +205,13 @@ namespace oxygine
 
         bool Zips::isExists(const char* name)
         {
-            MutexAutoLock al(_lock);
+            MutexRecursiveAutoLock al(_lock);
             return getEntryByName(name) != 0;
         }
 
         bool Zips::read(const char* name, file::buffer& bf)
         {
-            MutexAutoLock al(_lock);
+            MutexRecursiveAutoLock al(_lock);
 
             const file_entry* entry = getEntryByName(name);
             if (!entry)
@@ -221,13 +221,13 @@ namespace oxygine
 
         bool Zips::read(const file_entry* entry, file::buffer& bf)
         {
-            MutexAutoLock al(_lock);
+            MutexRecursiveAutoLock al(_lock);
             return readEntry(entry, bf);
         }
 
         void Zips::reset()
         {
-            MutexAutoLock al(_lock);
+            MutexRecursiveAutoLock al(_lock);
             for (zips::iterator i = _zps.begin(); i != _zps.end(); ++i)
             {
                 zpitem& f = *i;
@@ -456,7 +456,7 @@ namespace oxygine
 
         FileSystem::status ZipFileSystem::_open(const char* file, const char* mode, error_policy ep, file::fileHandle*& fh)
         {
-            MutexAutoLock lock(_zips._lock);
+            MutexRecursiveAutoLock lock(_zips._lock);
 
             const file_entry* entry = _zips.getEntryByName(file);
             if (entry)

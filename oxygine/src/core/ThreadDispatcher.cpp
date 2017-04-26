@@ -1,6 +1,10 @@
 #include "ThreadDispatcher.h"
 #include "log.h"
-#include "pthread.h"
+
+#if !OX_CPP11THREADS
+    #include "pthread.h"
+#endif
+
 #include "Mutex.h"
 
 namespace oxygine
@@ -18,7 +22,21 @@ namespace oxygine
 
 #endif
 
+#if OX_CPP11THREADS
+    MutexPthreadLock::MutexPthreadLock(std::unique_lock<std::mutex>& l, bool lock) : _lock(l), _locked(false)
+    {
+        if(lock && !_lock.owns_lock())
+        {
+            _lock.lock();
+            _locked = true;
+        }
+    }
 
+    MutexPthreadLock::~MutexPthreadLock()
+    {
+        _lock.unlock();
+    }
+#else
     MutexPthreadLock::MutexPthreadLock(pthread_mutex_t& m, bool lock) : _mutex(m), _locked(lock)
     {
         if (_locked)
@@ -29,10 +47,16 @@ namespace oxygine
     {
         pthread_mutex_unlock(&_mutex);
     }
+#endif
 
+#if OX_CPP11THREADS
+    ThreadDispatcher::ThreadDispatcher(): _mutex(_mutexInternal), _id(0), _result(0)
+#else
     ThreadDispatcher::ThreadDispatcher(): _id(0), _result(0)
+#endif
     {
 #ifndef OX_NO_MT
+    #if !OX_CPP11THREADS
         pthread_cond_init(&_cond, 0);
 
         pthread_mutexattr_t attr;
@@ -40,6 +64,7 @@ namespace oxygine
         pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
 
         pthread_mutex_init(&_mutex, &attr);
+    #endif
 #endif
         _events.reserve(10);
     }
@@ -47,8 +72,15 @@ namespace oxygine
     ThreadDispatcher::~ThreadDispatcher()
     {
 #ifndef OX_NO_MT
+    #if OX_CPP11THREADS
+        if(_mutex.owns_lock())
+            _mutex.unlock();
+
+        //_cond.notify_all();
+    #else
         pthread_mutex_destroy(&_mutex);
         pthread_cond_destroy(&_cond);
+    #endif
 #endif
     }
 
@@ -58,7 +90,11 @@ namespace oxygine
         _replyLast(0);
 
         while (_events.empty())
+    #if OX_CPP11THREADS
+            _cond.wait(_mutex);
+    #else
             pthread_cond_wait(&_cond, &_mutex);
+    #endif
 #endif
     }
 
@@ -191,10 +227,19 @@ namespace oxygine
             LOGDN("replying to id=%d", _last._id);
 
 #ifndef OX_NO_MT
+    #if OX_CPP11THREADS
+            _cond.notify_all();
+    #else
             //pthread_cond_signal(&_cond);
             pthread_cond_broadcast(&_cond);
+    #endif
 #endif
+
+#if OX_CPP11THREADS
+            _cond.wait(_mutex);
+#else
             pthread_cond_wait(&_cond, &_mutex);
+#endif
         }
     }
 
@@ -206,15 +251,28 @@ namespace oxygine
         {
             LOGDN("ThreadMessages::waiting reply... _replyingTo=%d  myid=%d", _replyingTo, id);
 #ifndef OX_NO_MT
+    #if OX_CPP11THREADS
+            _cond.notify_one();
+    #else
             pthread_cond_signal(&_cond);
+    #endif
 #endif
+
+#if OX_CPP11THREADS
+            _cond.wait(_mutex);
+#else
             pthread_cond_wait(&_cond, &_mutex);
+#endif
         }
         while (_replyingTo != id);
 
         _last.need_reply = false;
 #ifndef OX_NO_MT
+    #if OX_CPP11THREADS
+        _cond.notify_one();
+    #else
         pthread_cond_signal(&_cond);
+    #endif
 #endif
     }
 
@@ -281,7 +339,11 @@ namespace oxygine
         msg._id = ++_id;
         _events.push_back(msg);
 #ifndef OX_NO_MT
+    #if OX_CPP11THREADS
+        _cond.notify_one();
+    #else
         pthread_cond_signal(&_cond);
+    #endif
 #endif
     }
 
@@ -367,11 +429,20 @@ namespace oxygine
 
     std::vector<ThreadDispatcher::message>& ThreadDispatcher::lockMessages()
     {
+#if OX_CPP11THREADS
+        _mutex.lock();
+#else
         pthread_mutex_lock(&_mutex);
+#endif
+
         return _events;
     }
     void ThreadDispatcher::unlockMessages()
     {
+#if OX_CPP11THREADS
+        _mutex.unlock();
+#else
         pthread_mutex_unlock(&_mutex);
+#endif
     }
 }

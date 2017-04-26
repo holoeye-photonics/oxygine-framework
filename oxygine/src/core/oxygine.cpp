@@ -55,7 +55,11 @@
 #include "ios/ios.h"
 #endif
 
-#include "pthread.h"
+#if OX_CPP11THREADS
+    #include <thread>
+#else
+    #include "pthread.h"
+#endif
 
 #ifdef OXYGINE_SDL
 extern "C"
@@ -100,7 +104,11 @@ namespace oxygine
 
     spEventDispatcher _dispatcher;
 
+#if OX_CPP11THREADS
+    static std::thread::id _mainThread;
+#else
     static pthread_t _mainThread;
+#endif
 
 #ifdef __S3E__
 
@@ -222,7 +230,11 @@ namespace oxygine
 #ifdef OX_NO_MT
             return true;
 #else
+    #if OX_CPP11THREADS
+            return _mainThread == std::this_thread::get_id();
+    #else
             return pthread_equal(_mainThread, pthread_self()) != 0;
+    #endif
 #endif
         }
 
@@ -443,7 +455,11 @@ namespace oxygine
         {
 
 #ifndef OX_NO_MT
+    #if OX_CPP11THREADS
+            _mainThread = std::this_thread::get_id();
+    #else
             _mainThread = pthread_self();
+    #endif
 #endif
 
             if (!_dispatcher)
