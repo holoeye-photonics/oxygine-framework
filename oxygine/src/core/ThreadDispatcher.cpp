@@ -1,7 +1,9 @@
 #include "ThreadDispatcher.h"
 #include "log.h"
 
-#if !OX_CPP11THREADS
+#if OX_CPP11THREADS
+    #include <thread>
+#else
     #include "pthread.h"
 #endif
 
@@ -9,11 +11,15 @@
 
 namespace oxygine
 {
-#if 0
+#if OX_DEBUGTHREADING
     static size_t threadID()
     {
+    #if OX_CPP11THREADS
+        return std::this_thread::get_id().hash();
+    #else
         pthread_t pt = pthread_self();
         return ((size_t*)(&pt))[0];
+    #endif
     }
 #define  LOGDN(format, ...)  log::messageln("ThreadMessages(%lu)::" format, threadID(), __VA_ARGS__)
 
@@ -23,9 +29,9 @@ namespace oxygine
 #endif
 
 #if OX_CPP11THREADS
-    MutexPthreadLock::MutexPthreadLock(std::unique_lock<std::mutex>& l, bool lock) : _lock(l), _locked(false)
+    MutexPthreadLock::MutexPthreadLock(std::recursive_mutex& l, bool lock) : _lock(l), _locked(false)
     {
-        if(lock && !_lock.owns_lock())
+        if(lock)
         {
             _lock.lock();
             _locked = true;
@@ -34,7 +40,8 @@ namespace oxygine
 
     MutexPthreadLock::~MutexPthreadLock()
     {
-        _lock.unlock();
+        if(_locked)
+            _lock.unlock();
     }
 #else
     MutexPthreadLock::MutexPthreadLock(pthread_mutex_t& m, bool lock) : _mutex(m), _locked(lock)
@@ -50,7 +57,7 @@ namespace oxygine
 #endif
 
 #if OX_CPP11THREADS
-    ThreadDispatcher::ThreadDispatcher(): _mutex(_mutexInternal), _id(0), _result(0)
+    ThreadDispatcher::ThreadDispatcher(): _id(0), _result(0)
 #else
     ThreadDispatcher::ThreadDispatcher(): _id(0), _result(0)
 #endif
@@ -73,10 +80,7 @@ namespace oxygine
     {
 #ifndef OX_NO_MT
     #if OX_CPP11THREADS
-        if(_mutex.owns_lock())
-            _mutex.unlock();
-
-        //_cond.notify_all();
+        _cond.notify_all();
     #else
         pthread_mutex_destroy(&_mutex);
         pthread_cond_destroy(&_cond);

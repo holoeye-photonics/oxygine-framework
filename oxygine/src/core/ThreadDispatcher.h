@@ -5,7 +5,8 @@
 
 #if OX_CPP11THREADS
     #include <mutex>
-    #include <condition_variable>
+    #include <thread>
+    #include <atomic>
 #else
 
 #if defined(_WIN32) && !defined(__MINGW32__)
@@ -23,11 +24,11 @@ namespace oxygine
     class MutexPthreadLock
     {
     public:
-        MutexPthreadLock(std::unique_lock<std::mutex>& l, bool lock = true);
+        MutexPthreadLock(std::recursive_mutex& l, bool lock = true);
         ~MutexPthreadLock();
 
     protected:
-        std::unique_lock<std::mutex>& _lock;
+        std::recursive_mutex& _lock;
         bool _locked;
     };
 #else
@@ -153,10 +154,36 @@ namespace oxygine
         void _replyLast(void* val);
 
 #if OX_CPP11THREADS
-        // TODO: This should be a std::recursive_mutex considering the original code but std::condition_variable only supports a normal std::mutex
-        std::mutex _mutexInternal;
-        std::unique_lock<std::mutex> _mutex;
-        std::condition_variable _cond;
+        std::recursive_mutex _mutex;
+
+        class
+        {
+        private:
+            std::atomic_uint _in, _out;
+
+        public:
+            void wait(std::recursive_mutex &mutex)
+            {
+                mutex.unlock();
+
+                const unsigned int ticket = ++_in;
+
+                while(_out < ticket)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+                mutex.lock();
+            }
+
+            void notify_all()
+            {
+                _out = _in;
+            }
+
+            void notify_one()
+            {
+                _out++;
+            }
+        } _cond;
 #else
         pthread_mutex_t _mutex;
         pthread_cond_t _cond;
