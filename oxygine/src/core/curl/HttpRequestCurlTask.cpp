@@ -3,6 +3,7 @@
 #include "core/ThreadDispatcher.h"
 #include "SDL.h"
 #include "pthread.h"
+#include "key.h"
 
 namespace oxygine
 {
@@ -18,7 +19,7 @@ namespace oxygine
     }
 
     const unsigned int ID_DONE = sysEventID('C', 'D', 'N');
-    const unsigned int ID_PROGRESS = sysEventID('C', 'P', 'R');
+
 
     void mainThreadFunc(const ThreadDispatcher::message& msg)
     {
@@ -32,41 +33,13 @@ namespace oxygine
                 curl_easy_getinfo(easy, CURLINFO_PRIVATE, &task);
 
                 bool ok = (size_t)msg.arg2 == CURLE_OK;
-                if (ok)
-                {
-                    int response = 0;
-                    curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &response);
-                    task->_responseCode = response;
-                    //ok = response == 200;
-                }
-
-#if 0
-                const Uint8* data = SDL_GetKeyboardState(0);
-                static bool fail = false;
-
-                if (data[SDL_SCANCODE_N])
-                    fail = true;
-                if (data[SDL_SCANCODE_M])
-                    fail = false;
-
-                if (fail)
-                    ok = false;
-#endif
 
                 if (ok)
-                {
                     task->onComplete();
-                }
                 else
                     task->onError();
 
                 task->releaseRef();
-            } break;
-
-            case ID_PROGRESS:
-            {
-                HttpRequestTaskCURL* task = (HttpRequestTaskCURL*)msg.cbData;
-                task->dispatchProgress((int)(size_t)msg.arg2, (int)(size_t)msg.arg1);
             } break;
         }
 
@@ -112,6 +85,14 @@ namespace oxygine
                     /* get file descriptors from the transfers */
                     curl_multi_fdset(multi_handle, &fdread, &fdwrite, &fdexcep, &maxfd);
 
+#ifdef OX_DEBUG___
+                    if (fdread.fd_count > 0)
+                    {
+                        if (key::isPressed(SDL_SCANCODE_P))
+                            closesocket(fdread.fd_array[0]);
+                    }
+#endif
+
                     if (maxfd == -1)
                     {
                         sleep(100);
@@ -131,6 +112,7 @@ namespace oxygine
                     {
                         if (msg->msg == CURLMSG_DONE)
                         {
+
 #ifdef OX_HAS_CPP11 //msg broken in VS2010
                             curl_multi_remove_handle(multi_handle, msg->easy_handle);
                             core::getMainThreadDispatcher().postCallback(ID_DONE, msg->easy_handle, (void*)msg->data.result, mainThreadFunc, 0);
@@ -164,61 +146,64 @@ namespace oxygine
         multi_handle = 0;
     }
 
-    size_t HttpRequestTaskCURL::cbXRefInfoFunction(void* userData, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow)
+
+    size_t HttpRequestTaskCURL::cbWriteFunction(char* d, size_t n, size_t l, HttpRequestTaskCURL* This)
     {
-        return ((HttpRequestTaskCURL*)userData)->_cbXRefInfoFunction(dltotal, dlnow);
-    }
-
-    size_t HttpRequestTaskCURL::_cbXRefInfoFunction(curl_off_t dltotal, curl_off_t dlnow)
-    {
-        core::getMainThreadDispatcher().postCallback(ID_PROGRESS, (void*)dltotal, (void*)dlnow, mainThreadFunc, this);
-
-        return 0;
-    }
-
-
-    int HttpRequestTaskCURL::cbProgressFunction(void* userData, double dltotal, double dlnow, double ultotal, double ulnow)
-    {
-        return ((HttpRequestTaskCURL*)userData)->_cbXRefInfoFunction((curl_off_t) dltotal, (curl_off_t)dlnow);
-    }
-
-    size_t HttpRequestTaskCURL::cbWriteFunction(char* d, size_t n, size_t l, void* userData)
-    {
-        return ((HttpRequestTaskCURL*)userData)->_cbWriteFunction(d, n, l);
+        return This->_cbWriteFunction(d, n, l);
     }
 
 
     size_t HttpRequestTaskCURL::_cbWriteFunction(char* d, size_t n, size_t l)
     {
-        if (!_handle && !_fname.empty())
-        {
-            _handle = file::open(_fname, "wb");
-        }
-
         size_t size = n * l;
-        if (!_fname.empty())
-        {
-            file::write(_handle, d, (unsigned int)size);
-        }
-        else
-        {
-            _response.insert(_response.end(), d, d + size);
-        }
+
+        write(d, size);
 
         return size;
     }
 
-    HttpRequestTaskCURL::HttpRequestTaskCURL() : _easy(0), _handle(0), _httpHeaders(0)
+    size_t HttpRequestTaskCURL::cbHeaderFunction(char* d, size_t n, size_t l, HttpRequestTaskCURL* This)
+    {
+        return This->_cbHeaderFunction(d, n, l);
+    }
+
+
+    size_t HttpRequestTaskCURL::_cbHeaderFunction(char* d, size_t n, size_t l)
+    {
+        size_t s = n * l;
+        if (s > 255)//ignore unknown headers
+            return s;
+
+
+        int contentLength = 0;
+        if (sscanf(d, "Content-Length: %d", &contentLength) == 1)
+        {
+            _expectedContentSize = contentLength;
+        }
+
+        int responseCode = 0;
+        char ver[32];
+        if (sscanf(d, "HTTP/%s %d ", ver, &responseCode) == 2)
+        {
+            _responseCode = responseCode;
+        }
+
+        if (d[0] == '\r' && d[1] == '\n')
+        {
+            gotHeaders();
+        }
+
+        return s;
+    }
+
+    HttpRequestTaskCURL::HttpRequestTaskCURL() : _easy(0), _httpHeaders(0)
     {
         _easy = curl_easy_init();
     }
 
     HttpRequestTaskCURL::~HttpRequestTaskCURL()
     {
-        if (_handle)
-            file::close(_handle);
-        _handle = 0;
-
+        log::messageln("~HttpRequestTaskCURL");
         if (_easy)
             curl_easy_cleanup(_easy);
         _easy = 0;
@@ -235,17 +220,13 @@ namespace oxygine
         curl_easy_setopt(_easy, CURLOPT_WRITEFUNCTION, HttpRequestTaskCURL::cbWriteFunction);
         curl_easy_setopt(_easy, CURLOPT_WRITEDATA, this);
 
+        curl_easy_setopt(_easy, CURLOPT_HEADERFUNCTION, HttpRequestTaskCURL::cbHeaderFunction);
+        curl_easy_setopt(_easy, CURLOPT_HEADERDATA, this);
+
 
         curl_easy_setopt(_easy, CURLOPT_NOPROGRESS, 0);
 
-#ifdef CURLOPT_XFERINFOFUNCTION
-        curl_easy_setopt(_easy, CURLOPT_XFERINFOFUNCTION, HttpRequestTaskCURL::cbXRefInfoFunction);
-        curl_easy_setopt(_easy, CURLOPT_XFERINFODATA, this);
-#else
 
-        curl_easy_setopt(_easy, CURLOPT_PROGRESSFUNCTION, HttpRequestTaskCURL::cbProgressFunction);
-        curl_easy_setopt(_easy, CURLOPT_PROGRESSDATA, this);
-#endif
         curl_easy_setopt(_easy, CURLOPT_FOLLOWLOCATION, true);
 
 
@@ -266,16 +247,5 @@ namespace oxygine
 
         addRef();
         _messages.post(0, _easy, 0);
-    }
-
-    void HttpRequestTaskCURL::_finalize(bool error)
-    {
-        if (_handle)
-        {
-            file::close(_handle);
-            if (error)
-                file::deleteFile(_fname);
-        }
-        _handle = 0;
     }
 }
