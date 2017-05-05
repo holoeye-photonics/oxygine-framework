@@ -574,6 +574,11 @@ namespace oxygine
             return STDRenderer::isReady();
         }
 
+        void makeContextCurrent()
+        {
+            SDL_GL_MakeCurrent(_window, _context);
+        }
+
         bool  beginRendering(window w)
         {
 
